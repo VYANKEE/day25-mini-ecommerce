@@ -3,7 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 
-// Import Models
+// Import Models (Make sure files exist in /models folder)
 const Product = require('./models/Product');
 const Cart = require('./models/Cart');
 const Order = require('./models/Order');
@@ -12,9 +12,10 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Database Connection
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected'))
-  .catch((err) => console.log(err));
+  .catch((err) => console.log('❌ DB Connection Error:', err));
 
 // ================= PRODUCT ROUTES =================
 
@@ -40,43 +41,63 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// 🔥 3. DELETE ALL PRODUCTS (Yeh naya route hai jo missing tha)
+// 3. DELETE ALL PRODUCTS (Reset Store ke liye)
 app.delete('/api/products/clear', async (req, res) => {
   try {
-    await Product.deleteMany({}); // Saare products saaf!
+    await Product.deleteMany({});
     res.json({ message: "All products deleted successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ================= CART ROUTES =================
+// ================= CART ROUTES (UPDATED LOGIC) =================
 
+// 4. Add/Update Cart (Negative fix included here)
 app.post('/api/cart', async (req, res) => {
   const { userId, productId, quantity } = req.body;
+
   try {
     let cart = await Cart.findOne({ userId });
+
     if (cart) {
+      // Cart exists
       const itemIndex = cart.products.findIndex(p => p.productId == productId);
+
       if (itemIndex > -1) {
+        // Product pehle se hai -> Quantity update karo
         cart.products[itemIndex].quantity += quantity;
+
+        // 🔥 CRITICAL FIX: Agar quantity 0 ya kam ho, toh uda do
+        if (cart.products[itemIndex].quantity <= 0) {
+          cart.products.splice(itemIndex, 1);
+        }
       } else {
-        cart.products.push({ productId, quantity });
+        // Naya product -> Add karo (agar quantity positive hai)
+        if (quantity > 0) {
+          cart.products.push({ productId, quantity });
+        }
       }
       cart = await cart.save();
       res.status(200).json(cart);
     } else {
-      const newCart = await Cart.create({
-        userId,
-        products: [{ productId, quantity }]
-      });
-      res.status(201).json(newCart);
+      // New Cart create karo
+      if (quantity > 0) {
+        const newCart = await Cart.create({
+          userId,
+          products: [{ productId, quantity }]
+        });
+        res.status(201).json(newCart);
+      } else {
+        res.status(400).json({ message: "Invalid quantity" });
+      }
     }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
+// 5. Get Cart
 app.get('/api/cart/:userId', async (req, res) => {
   try {
     const cart = await Cart.findOne({ userId: req.params.userId }).populate('products.productId');
@@ -88,13 +109,17 @@ app.get('/api/cart/:userId', async (req, res) => {
 
 // ================= ORDER ROUTES =================
 
+// 6. Place Order
 app.post('/api/orders', async (req, res) => {
   const { userId } = req.body;
+
   try {
     const cart = await Cart.findOne({ userId }).populate('products.productId');
+    
     if (!cart || cart.products.length === 0) {
       return res.status(400).json({ message: "Cart is empty" });
     }
+
     let total = 0;
     const orderItems = cart.products.map(item => {
       total += item.quantity * item.productId.price;
@@ -104,15 +129,21 @@ app.post('/api/orders', async (req, res) => {
         price: item.productId.price
       };
     });
+
     const order = new Order({
       userId,
       items: orderItems,
       totalPrice: total
     });
+
     await order.save();
+
+    // Order ban gaya, ab cart khaali karo
     cart.products = [];
     await cart.save();
+
     res.status(201).json({ message: "Order placed successfully", order });
+
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
