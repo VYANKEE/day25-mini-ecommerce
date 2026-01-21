@@ -1,8 +1,8 @@
 import axios from 'axios';
 
-// Yeh URL ensure karta hai ki humare backend se baat ho rahi hai
 const API = axios.create({
-  baseURL: 'http://localhost:5000/api', 
+  // Ab hum Live Backend se connect kar rahe hain
+  baseURL: 'https://day25-mini-ecommerce.onrender.com/api',
 });
 
 export default API;
